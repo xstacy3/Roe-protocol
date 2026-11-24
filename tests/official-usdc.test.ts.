@@ -1,3 +1,4 @@
+
 import * as splToken from "@solana/spl-token";
 
 describe("ROE Protocol V4 Official USDC", () => {
@@ -175,5 +176,161 @@ console.log("Verified treasury payment:", received.toString());
     console.log("PASS: Sales counter verified");
     console.log("Transaction:", tx);
     console.log("ALL OFFICIAL USDC PAYMENT TESTS PASSED!");
+
+const attacker = web3.Keypair.generate();
+
+const attacker = web3.Keypair.generate();
+const secondBuyer = web3.Keypair.generate();
+
+const attackerToken =
+  await splToken.getAssociatedTokenAddress(
+    mint, attacker.publicKey
+  );
+
+const secondBuyerToken =
+  await splToken.getAssociatedTokenAddress(
+    mint, secondBuyer.publicKey
+  );
+
+const securitySetup = new web3.Transaction().add(
+  web3.SystemProgram.transfer({
+    fromPubkey: treasury,
+    toPubkey: secondBuyer.publicKey,
+    lamports: 30000000,
+  }),
+  splToken.createAssociatedTokenAccountInstruction(
+    treasury, attackerToken, attacker.publicKey, mint
+  ),
+  splToken.createAssociatedTokenAccountInstruction(
+    treasury, secondBuyerToken, secondBuyer.publicKey, mint
+  ),
+  splToken.createTransferCheckedInstruction(
+    treasuryToken, mint, secondBuyerToken,
+    treasury, 1000000, 6
+  )
+);
+
+await pg.program.provider.sendAndConfirm(securitySetup);
+
+const [secondReceipt] =
+  web3.PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("usdc_receipt"),
+      product.publicKey.toBuffer(),
+      secondBuyer.publicKey.toBuffer(),
+    ],
+    pg.program.programId
+  );
+
+const accounts = {
+  product: product.publicKey,
+  buyer: secondBuyer.publicKey,
+  mint: mint,
+  buyerToken: secondBuyerToken,
+  expertToken: expertToken,
+  treasuryToken: treasuryToken,
+  receipt: secondReceipt,
+  tokenProgram: splToken.TOKEN_PROGRAM_ID,
+  systemProgram: web3.SystemProgram.programId,
+};
+
+let duplicateBlocked = false;
+
+try {
+  await pg.program.methods
+    .purchaseUsdcProduct()
+    .accounts({
+      ...accounts,
+      buyer: buyer.publicKey,
+      buyerToken: buyerToken,
+      receipt: receipt,
+    })
+    .signers([buyer])
+    .rpc();
+} catch (error) {
+  duplicateBlocked = /already in use|already initialized/i
+    .test(String(error) + " " + (error.logs || []).join(" "));
+}
+
+assert(duplicateBlocked, "Duplicate protection failed");
+console.log("PASS: Duplicate USDC purchase blocked");
+
+let expertBlocked = false;
+
+try {
+  await pg.program.methods
+    .purchaseUsdcProduct()
+    .accounts({
+      ...accounts,
+      expertToken: attackerToken,
+    })
+    .signers([secondBuyer])
+    .rpc();
+} catch (error) {
+  console.log("Expert rejection:", String(error));
+
+  expertBlocked =
+    /ConstraintRaw/i.test(String(error)) &&
+    /expert_token/i.test(String(error));
+}
+
+assert(expertBlocked, "Expert protection failed");
+console.log("PASS: Expert USDC redirection blocked");
+
+let treasuryBlocked = false;
+
+try {
+  await pg.program.methods
+    .purchaseUsdcProduct()
+    .accounts({
+      ...accounts,
+      treasuryToken: attackerToken,
+    })
+    .signers([secondBuyer])
+    .rpc();
+} catch (error) {
+  console.log("Treasury rejection:", String(error));
+
+  treasuryBlocked =
+    /ConstraintRaw/i.test(String(error)) &&
+    /treasury_token/i.test(String(error));
+}
+
+assert(treasuryBlocked, "Treasury protection failed");
+console.log("PASS: Treasury USDC redirection blocked");
+
+const finalProduct =
+  await pg.program.account.usdcProduct.fetch(
+    product.publicKey
+  );
+
+assert(finalProduct.totalSales.eq(new BN(1)));
+
+const unauthorizedReceipt =
+  await pg.connection.getAccountInfo(
+    secondReceipt, "confirmed"
+  );
+
+assert(unauthorizedReceipt === null);
+
+const attackerBalance =
+  await pg.connection.getTokenAccountBalance(
+    attackerToken, "confirmed"
+  );
+
+assert(attackerBalance.value.amount === "0");
+
+const secondBuyerBalance =
+  await pg.connection.getTokenAccountBalance(
+    secondBuyerToken, "confirmed"
+  );
+
+assert(secondBuyerBalance.value.amount === "1000000");
+
+console.log("PASS: Sales counter unchanged");
+console.log("PASS: No unauthorized receipt created");
+console.log("PASS: Attacker received zero USDC");
+console.log("PASS: Second buyer funds protected");
+console.log("ALL OFFICIAL USDC SECURITY CHECKS PASSED!");
   });
 });
