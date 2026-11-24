@@ -1,333 +1,180 @@
-se anchor_spl::token::{
-    self, Mint, Token, TokenAccount, TransferChecked
-};
-use anchor_lang::prelude::*;
-use anchor_lang::system_program;
-use anchor_lang::solana_program::pubkey;
 
-declare_id!("AgLgRNkHxgryW1c254Fm1X7Jo9FnuL9C3KeDCCZbihdb");
+import * as splToken from "@solana/spl-token";
 
-pub const TREASURY: Pubkey =
-    pubkey!("ABnixr4SdbKJnArjXfjo2ngRW958p91jKZuzTMdjFJbP");
+describe("ROE Protocol V4 Official USDC", () => {
+  it("Verifies official USDC revenue sharing", async () => {
+    const treasury = pg.wallet.publicKey;
+    const expert = web3.Keypair.generate();
+    const buyer = web3.Keypair.generate();
+    const product = web3.Keypair.generate();
 
-#[program]
-pub mod roe_protocol {
-    use super::*;
-
-pub fn purchase_usdc_product(
-    ctx: Context<PurchaseUsdcProduct>,
-) -> Result<()> {
-    let product = &mut ctx.accounts.product;
-
-    require!(product.active, RoeError::InactiveProduct);
-
-    let price = product.price;
-    let vault_share = ((price as u128) * 30 / 100) as u64;
-    let expert_share = price - vault_share;
-
-    token::transfer_checked(
-        CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked {
-                from: ctx.accounts.buyer_token.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-                to: ctx.accounts.expert_token.to_account_info(),
-                authority: ctx.accounts.buyer.to_account_info(),
-            },
-        ),
-        expert_share,
-        6,
-    )?;
-
-    token::transfer_checked(
-        CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            TransferChecked {
-                from: ctx.accounts.buyer_token.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-                to: ctx.accounts.treasury_token.to_account_info(),
-                authority: ctx.accounts.buyer.to_account_info(),
-            },
-        ),
-        vault_share,
-        6,
-    )?;
-
-    product.total_sales = product.total_sales
-        .checked_add(1)
-        .ok_or(RoeError::Overflow)?;
-
-    let receipt = &mut ctx.accounts.receipt;
-    receipt.buyer = ctx.accounts.buyer.key();
-    receipt.product = product.key();
-    receipt.mint = ctx.accounts.mint.key();
-    receipt.amount = price;
-
-    msg!("Expert received: {}", expert_share);
-    msg!("Roe Vault received: {}", vault_share);
-    msg!("ROE token purchase successful");
-
-    Ok(())
-}
-
-pub fn register_usdc_product(
-    ctx: Context<RegisterUsdcProduct>,
-    title: String,
-    price: u64,
-) -> Result<()> {
-    require!(
-        !title.is_empty() && title.len() <= 100,
-        RoeError::InvalidTitle
+    const mint = new web3.PublicKey(
+      "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
     );
 
-    require!(price > 0, RoeError::InvalidPrice);
+    const price = new BN(1000000);
 
-    let product = &mut ctx.accounts.product;
+    const treasuryToken =
+      await splToken.getAssociatedTokenAddress(mint, treasury);
 
-    product.expert = ctx.accounts.expert.key();
-    product.mint = ctx.accounts.mint.key();
-    product.title = title;
-    product.price = price;
-    product.active = true;
-    product.total_sales = 0;
+    const expertToken =
+      await splToken.getAssociatedTokenAddress(mint, expert.publicKey);
 
-    msg!("ROE USDC product registered successfully");
+    const buyerToken =
+      await splToken.getAssociatedTokenAddress(mint, buyer.publicKey);
 
-    Ok(())
-}
+    const setup = new web3.Transaction().add(
+      web3.SystemProgram.transfer({
+        fromPubkey: treasury,
+        toPubkey: expert.publicKey,
+        lamports: 30000000,
+      }),
+      web3.SystemProgram.transfer({
+        fromPubkey: treasury,
+        toPubkey: buyer.publicKey,
+        lamports: 30000000,
+      }),
+      splToken.createAssociatedTokenAccountIdempotentInstruction(
+        treasury, treasuryToken, treasury, mint
+      ),
+      splToken.createAssociatedTokenAccountInstruction(
+        treasury, expertToken, expert.publicKey, mint
+      ),
+      splToken.createAssociatedTokenAccountInstruction(
+        treasury, buyerToken, buyer.publicKey, mint
+      ),
+      splToken.createTransferCheckedInstruction(
+        treasuryToken, mint, buyerToken, treasury, 2000000, 6
+      )
+    );
 
-    pub fn register_product(
-        ctx: Context<RegisterProduct>,
-        title: String,
-        price: u64,
-    ) -> Result<()> {
-        require!(
-            !title.is_empty() && title.len() <= 100,
-            RoeError::InvalidTitle
-        );
-        require!(price > 0, RoeError::InvalidPrice);
+    await pg.program.provider.sendAndConfirm(setup);
 
-        let product = &mut ctx.accounts.product;
-        product.expert = ctx.accounts.expert.key();
-        product.title = title;
-        product.price = price;
-        product.active = true;
-        product.total_sales = 0;
+    console.log("PASS: Buyer funded with 2 official test USDC");
 
-        msg!("ROE product registered successfully");
-        Ok(())
-    }
+    const treasuryBefore = new BN(
+      (await pg.connection.getTokenAccountBalance(
+        treasuryToken, "confirmed"
+      )).value.amount
+    );
 
-    pub fn purchase_product(
-        ctx: Context<PurchaseProduct>,
-    ) -> Result<()> {
-        let product = &mut ctx.accounts.product;
+    await pg.program.methods
+      .registerUsdcProduct(
+        "Caviar Mindset: Wealth Fundamentals",
+        price
+      )
+      .accounts({
+        product: product.publicKey,
+        expert: expert.publicKey,
+        mint: mint,
+        systemProgram: web3.SystemProgram.programId,
+      })
+      .signers([product, expert])
+      .rpc();
 
-        require!(product.active, RoeError::InactiveProduct);
+    console.log("PASS: Official USDC product registered");
 
-        let price = product.price;
+    const [receipt] = web3.PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("usdc_receipt"),
+        product.publicKey.toBuffer(),
+        buyer.publicKey.toBuffer(),
+      ],
+      pg.program.programId
+    );
 
-        let vault_share = ((price as u128) * 30 / 100) as u64;
-        let expert_share = price - vault_share;
+    const tx = await pg.program.methods
+      .purchaseUsdcProduct()
+      .accounts({
+        product: product.publicKey,
+        buyer: buyer.publicKey,
+        mint: mint,
+        buyerToken: buyerToken,
+        expertToken: expertToken,
+        treasuryToken: treasuryToken,
+        receipt: receipt,
+        tokenProgram: splToken.TOKEN_PROGRAM_ID,
+        systemProgram: web3.SystemProgram.programId,
+      })
+      .signers([buyer])
+      .rpc();
 
-        system_program::transfer(
-            CpiContext::new(
-                ctx.accounts.system_program.to_account_info(),
-                system_program::Transfer {
-                    from: ctx.accounts.buyer.to_account_info(),
-                    to: ctx.accounts.expert.to_account_info(),
-                },
-            ),
-            expert_share,
-        )?;
+    await pg.connection.confirmTransaction(tx, "confirmed");
 
-        system_program::transfer(
-            CpiContext::new(
-                ctx.accounts.system_program.to_account_info(),
-                system_program::Transfer {
-                    from: ctx.accounts.buyer.to_account_info(),
-                    to: ctx.accounts.treasury.to_account_info(),
-                },
-            ),
-            vault_share,
-        )?;
+    const expertBalance =
+      await pg.connection.getTokenAccountBalance(
+        expertToken, "confirmed"
+      );
 
-        product.total_sales = product.total_sales
-            .checked_add(1)
-            .ok_or(RoeError::Overflow)?;
+    const buyerBalance =
+      await pg.connection.getTokenAccountBalance(
+        buyerToken, "confirmed"
+      );
 
-        let receipt = &mut ctx.accounts.receipt;
-        receipt.buyer = ctx.accounts.buyer.key();
-        receipt.product = product.key();
-        receipt.amount = price;
+    const treasuryAfter = new BN(
+      (await pg.connection.getTokenAccountBalance(
+        treasuryToken, "confirmed"
+      )).value.amount
+    );
+console.log("Transaction:", tx);
+console.log("Expert balance:", expertBalance.value.amount);
+console.log("Buyer balance:", buyerBalance.value.amount);
+console.log("Treasury before:", treasuryBefore.toString());
+console.log("Treasury after:", treasuryAfter.toString());
+console.log("Treasury received:",
+  treasuryAfter.sub(treasuryBefore).toString());
+    assert(expertBalance.value.amount === "700000");
+    assert(buyerBalance.value.amount === "1000000");
+   const txDetails = await pg.connection.getTransaction(tx, {
+  commitment: "confirmed",
+  maxSupportedTransactionVersion: 0
+});
 
-        msg!("Expert received: {} lamports", expert_share);
-        msg!("Roe Vault received: {} lamports", vault_share);
-        msg!("Purchase completed successfully");
+assert(txDetails && txDetails.meta);
+assert(txDetails.meta.err === null);
 
-        Ok(())
-    }
-}
+const keys = txDetails.transaction.message.staticAccountKeys
+  || txDetails.transaction.message.accountKeys;
 
-#[derive(Accounts)]
-pub struct RegisterProduct<'info> {
-    #[account(
-        init,
-        payer = expert,
-        space = 8 + 32 + 4 + 100 + 8 + 1 + 8
-    )]
-    pub product: Account<'info, Product>,
+const treasuryIndex = keys.findIndex(
+  key => key.equals(treasuryToken)
+);
 
-    #[account(mut)]
-    pub expert: Signer<'info>,
+const pre = txDetails.meta.preTokenBalances.find(
+  b => b.accountIndex === treasuryIndex
+);
 
-    pub system_program: Program<'info, System>,
-}
+const post = txDetails.meta.postTokenBalances.find(
+  b => b.accountIndex === treasuryIndex
+);
 
-#[derive(Accounts)]
-pub struct PurchaseProduct<'info> {
-    #[account(mut, has_one = expert)]
-    pub product: Account<'info, Product>,
+assert(pre && post);
 
-    #[account(mut)]
-    pub buyer: Signer<'info>,
+const received = new BN(post.uiTokenAmount.amount)
+  .sub(new BN(pre.uiTokenAmount.amount));
 
-    #[account(mut)]
-    pub expert: SystemAccount<'info>,
+assert(received.eq(new BN(300000)));
 
-    #[account(mut, address = TREASURY)]
-    pub treasury: SystemAccount<'info>,
+console.log("Verified treasury payment:", received.toString());
 
-    #[account(
-        init,
-        payer = buyer,
-        space = 8 + 32 + 32 + 8,
-        seeds = [
-            b"receipt",
-            product.key().as_ref(),
-            buyer.key().as_ref()
-        ],
-        bump
-    )]
-    pub receipt: Account<'info, Receipt>,
+    const productData =
+      await pg.program.account.usdcProduct.fetch(product.publicKey);
 
-    pub system_program: Program<'info, System>,
-}
+    const receiptData =
+      await pg.program.account.usdcReceipt.fetch(receipt);
 
-#[account]
-pub struct Product {
-    pub expert: Pubkey,
-    pub title: String,
-    pub price: u64,
-    pub active: bool,
-    pub total_sales: u64,
-}
+    assert(productData.totalSales.eq(new BN(1)));
+    assert(receiptData.amount.eq(price));
+    assert(receiptData.mint.equals(mint));
+    assert(receiptData.buyer.equals(buyer.publicKey));
+    assert(receiptData.product.equals(product.publicKey));
 
-#[account]
-pub struct Receipt {
-    pub buyer: Pubkey,
-    pub product: Pubkey,
-    pub amount: u64,
-}
-
-#[error_code]
-pub enum RoeError {
-    #[msg("Product title must be 1-100 bytes.")]
-    InvalidTitle,
-
-    #[msg("Price must be greater than zero.")]
-    InvalidPrice,
-
-    #[msg("Product is not active.")]
-    InactiveProduct,
-
-    #[msg("Arithmetic overflow.")]
-    Overflow,
-}
-
-#[derive(Accounts)]
-pub struct RegisterUsdcProduct<'info> {
-    #[account(
-        init,
-        payer = expert,
-        space = 8 + 32 + 32 + 4 + 100 + 8 + 1 + 8
-    )]
-    pub product: Account<'info, UsdcProduct>,
-
-    #[account(mut)]
-    pub expert: Signer<'info>,
-
-    #[account(constraint = mint.decimals == 6)]
-    pub mint: Account<'info, Mint>,
-
-    pub system_program: Program<'info, System>,
-}
-
-#[account]
-pub struct UsdcProduct {
-    pub expert: Pubkey,
-    pub mint: Pubkey,
-    pub title: String,
-    pub price: u64,
-    pub active: bool,
-    pub total_sales: u64,
-}
-
-#[derive(Accounts)]
-pub struct PurchaseUsdcProduct<'info> {
-    #[account(mut, has_one = mint)]
-    pub product: Account<'info, UsdcProduct>,
-
-    #[account(mut)]
-    pub buyer: Signer<'info>,
-
-    #[account(constraint = mint.decimals == 6)]
-    pub mint: Account<'info, Mint>,
-
-    #[account(
-        mut,
-        constraint = buyer_token.owner == buyer.key(),
-        constraint = buyer_token.mint == mint.key(),
-        constraint = buyer_token.key() != expert_token.key(),
-        constraint = buyer_token.key() != treasury_token.key()
-    )]
-    pub buyer_token: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        constraint = expert_token.owner == product.expert,
-        constraint = expert_token.mint == mint.key()
-    )]
-    pub expert_token: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        constraint = treasury_token.owner == TREASURY,
-        constraint = treasury_token.mint == mint.key()
-    )]
-    pub treasury_token: Account<'info, TokenAccount>,
-
-    #[account(
-        init,
-        payer = buyer,
-        space = 8 + 32 + 32 + 32 + 8,
-        seeds = [
-            b"usdc_receipt",
-            product.key().as_ref(),
-            buyer.key().as_ref()
-        ],
-        bump
-    )]
-    pub receipt: Account<'info, UsdcReceipt>,
-
-    pub token_program: Program<'info, Token>,
-    pub system_program: Program<'info, System>,
-}
-
-#[account]
-pub struct UsdcReceipt {
-    pub buyer: Pubkey,
-    pub product: Pubkey,
-    pub mint: Pubkey,
-    pub amount: u64,
-}
+    console.log("PASS: Expert received 0.70 USDC");
+    console.log("PASS: Roe Vault received 0.30 USDC");
+    console.log("PASS: Buyer remaining balance 1 USDC");
+    console.log("PASS: Official USDC receipt verified");
+    console.log("PASS: Sales counter verified");
+    console.log("Transaction:", tx);
+    console.log("ALL OFFICIAL USDC PAYMENT TESTS PASSED!");
+  });
+});
