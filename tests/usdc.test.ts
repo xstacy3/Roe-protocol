@@ -1,4 +1,3 @@
-
 import * as splToken from "@solana/spl-token";
 
 describe("ROE Protocol V3 Token Payments", () => {
@@ -184,5 +183,179 @@ describe("ROE Protocol V3 Token Payments", () => {
     console.log("PASS: Sales counter verified");
     console.log("Transaction:", tx);
     console.log("ALL ROE TOKEN PAYMENT TESTS PASSED!");
+
+// Security test setup
+const attacker = web3.Keypair.generate();
+const secondBuyer = web3.Keypair.generate();
+
+const attackerToken =
+  await splToken.getAssociatedTokenAddress(
+    mint.publicKey,
+    attacker.publicKey
+  );
+
+const secondBuyerToken =
+  await splToken.getAssociatedTokenAddress(
+    mint.publicKey,
+    secondBuyer.publicKey
+  );
+
+const securitySetup = new web3.Transaction().add(
+  web3.SystemProgram.transfer({
+    fromPubkey: treasury,
+    toPubkey: secondBuyer.publicKey,
+    lamports: 30000000,
+  }),
+  splToken.createAssociatedTokenAccountInstruction(
+    treasury,
+    attackerToken,
+    attacker.publicKey,
+    mint.publicKey
+  ),
+  splToken.createAssociatedTokenAccountInstruction(
+    treasury,
+    secondBuyerToken,
+    secondBuyer.publicKey,
+    mint.publicKey
+  ),
+  splToken.createMintToInstruction(
+    mint.publicKey,
+    secondBuyerToken,
+    treasury,
+    100000000
+  )
+);
+
+await pg.program.provider.sendAndConfirm(securitySetup);
+
+const [secondReceipt] =
+  web3.PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("usdc_receipt"),
+      product.publicKey.toBuffer(),
+      secondBuyer.publicKey.toBuffer(),
+    ],
+    pg.program.programId
+  );
+
+const baseAccounts = {
+  product: product.publicKey,
+  buyer: secondBuyer.publicKey,
+  mint: mint.publicKey,
+  buyerToken: secondBuyerToken,
+  expertToken: expertToken,
+  treasuryToken: treasuryToken,
+  receipt: secondReceipt,
+  tokenProgram: splToken.TOKEN_PROGRAM_ID,
+  systemProgram: web3.SystemProgram.programId,
+};
+
+// Test 1: Duplicate purchase
+let duplicateBlocked = false;
+
+try {
+  await pg.program.methods
+    .purchaseUsdcProduct()
+    .accounts({
+      ...baseAccounts,
+      buyer: buyer.publicKey,
+      buyerToken: buyerToken,
+      receipt: receipt,
+    })
+    .signers([buyer])
+    .rpc();
+} catch (error) {
+  const details = [
+    String(error),
+    error.logs?.join(" "),
+  ].join(" ");
+
+  duplicateBlocked =
+    /already in use|already initialized/i.test(details);
+}
+
+assert(duplicateBlocked, "Duplicate protection failed");
+console.log("PASS: Duplicate token purchase blocked");
+
+// Test 2: Expert redirection
+let expertBlocked = false;
+
+try {
+  await pg.program.methods
+    .purchaseUsdcProduct()
+    .accounts({
+      ...baseAccounts,
+      expertToken: attackerToken,
+    })
+    .signers([secondBuyer])
+    .rpc();
+} catch (error) {
+  const details = String(error);
+  expertBlocked =
+    /ConstraintRaw/i.test(details) &&
+    /expert_token/i.test(details);
+}
+
+assert(expertBlocked, "Expert protection failed");
+console.log("PASS: Expert token redirection blocked");
+
+// Test 3: Treasury redirection
+let treasuryBlocked = false;
+
+try {
+  await pg.program.methods
+    .purchaseUsdcProduct()
+    .accounts({
+      ...baseAccounts,
+      treasuryToken: attackerToken,
+    })
+    .signers([secondBuyer])
+    .rpc();
+} catch (error) {
+  const details = String(error);
+  treasuryBlocked =
+    /ConstraintRaw/i.test(details) &&
+    /treasury_token/i.test(details);
+}
+
+assert(treasuryBlocked, "Treasury protection failed");
+console.log("PASS: Treasury token redirection blocked");
+
+// Verify no unauthorized changes
+const finalProduct =
+  await pg.program.account.usdcProduct.fetch(
+    product.publicKey
+  );
+
+assert(finalProduct.totalSales.eq(new BN(1)));
+
+const unauthorizedReceipt =
+  await pg.connection.getAccountInfo(
+    secondReceipt,
+    "confirmed"
+  );
+
+assert(unauthorizedReceipt === null);
+
+const attackerBalance =
+  await pg.connection.getTokenAccountBalance(
+    attackerToken,
+    "confirmed"
+  );
+
+assert(attackerBalance.value.amount === "0");
+
+const secondBuyerBalance =
+  await pg.connection.getTokenAccountBalance(
+    secondBuyerToken,
+    "confirmed"
+  );
+
+assert(secondBuyerBalance.value.amount === "100000000");
+
+console.log("PASS: Sales counter unchanged");
+console.log("PASS: No unauthorized receipt created");
+console.log("PASS: No unauthorized token transfers");
+console.log("ALL ROE TOKEN SECURITY CHECKS PASSED!");
   });
 });
