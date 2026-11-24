@@ -1,0 +1,179 @@
+import * as splToken from "@solana/spl-token";
+
+describe("ROE Protocol V4 Official USDC", () => {
+  it("Verifies official USDC revenue sharing", async () => {
+    const treasury = pg.wallet.publicKey;
+    const expert = web3.Keypair.generate();
+    const buyer = web3.Keypair.generate();
+    const product = web3.Keypair.generate();
+
+    const mint = new web3.PublicKey(
+      "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+    );
+
+    const price = new BN(1000000);
+
+    const treasuryToken =
+      await splToken.getAssociatedTokenAddress(mint, treasury);
+
+    const expertToken =
+      await splToken.getAssociatedTokenAddress(mint, expert.publicKey);
+
+    const buyerToken =
+      await splToken.getAssociatedTokenAddress(mint, buyer.publicKey);
+
+    const setup = new web3.Transaction().add(
+      web3.SystemProgram.transfer({
+        fromPubkey: treasury,
+        toPubkey: expert.publicKey,
+        lamports: 30000000,
+      }),
+      web3.SystemProgram.transfer({
+        fromPubkey: treasury,
+        toPubkey: buyer.publicKey,
+        lamports: 30000000,
+      }),
+      splToken.createAssociatedTokenAccountIdempotentInstruction(
+        treasury, treasuryToken, treasury, mint
+      ),
+      splToken.createAssociatedTokenAccountInstruction(
+        treasury, expertToken, expert.publicKey, mint
+      ),
+      splToken.createAssociatedTokenAccountInstruction(
+        treasury, buyerToken, buyer.publicKey, mint
+      ),
+      splToken.createTransferCheckedInstruction(
+        treasuryToken, mint, buyerToken, treasury, 2000000, 6
+      )
+    );
+
+    await pg.program.provider.sendAndConfirm(setup);
+
+    console.log("PASS: Buyer funded with 2 official test USDC");
+
+    const treasuryBefore = new BN(
+      (await pg.connection.getTokenAccountBalance(
+        treasuryToken, "confirmed"
+      )).value.amount
+    );
+
+    await pg.program.methods
+      .registerUsdcProduct(
+        "Caviar Mindset: Wealth Fundamentals",
+        price
+      )
+      .accounts({
+        product: product.publicKey,
+        expert: expert.publicKey,
+        mint: mint,
+        systemProgram: web3.SystemProgram.programId,
+      })
+      .signers([product, expert])
+      .rpc();
+
+    console.log("PASS: Official USDC product registered");
+
+    const [receipt] = web3.PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("usdc_receipt"),
+        product.publicKey.toBuffer(),
+        buyer.publicKey.toBuffer(),
+      ],
+      pg.program.programId
+    );
+
+    const tx = await pg.program.methods
+      .purchaseUsdcProduct()
+      .accounts({
+        product: product.publicKey,
+        buyer: buyer.publicKey,
+        mint: mint,
+        buyerToken: buyerToken,
+        expertToken: expertToken,
+        treasuryToken: treasuryToken,
+        receipt: receipt,
+        tokenProgram: splToken.TOKEN_PROGRAM_ID,
+        systemProgram: web3.SystemProgram.programId,
+      })
+      .signers([buyer])
+      .rpc();
+
+    await pg.connection.confirmTransaction(tx, "confirmed");
+
+    const expertBalance =
+      await pg.connection.getTokenAccountBalance(
+        expertToken, "confirmed"
+      );
+
+    const buyerBalance =
+      await pg.connection.getTokenAccountBalance(
+        buyerToken, "confirmed"
+      );
+
+    const treasuryAfter = new BN(
+      (await pg.connection.getTokenAccountBalance(
+        treasuryToken, "confirmed"
+      )).value.amount
+    );
+console.log("Transaction:", tx);
+console.log("Expert balance:", expertBalance.value.amount);
+console.log("Buyer balance:", buyerBalance.value.amount);
+console.log("Treasury before:", treasuryBefore.toString());
+console.log("Treasury after:", treasuryAfter.toString());
+console.log("Treasury received:",
+  treasuryAfter.sub(treasuryBefore).toString());
+    assert(expertBalance.value.amount === "700000");
+    assert(buyerBalance.value.amount === "1000000");
+   const txDetails = await pg.connection.getTransaction(tx, {
+  commitment: "confirmed",
+  maxSupportedTransactionVersion: 0
+});
+
+assert(txDetails && txDetails.meta);
+assert(txDetails.meta.err === null);
+
+const keys = txDetails.transaction.message.staticAccountKeys
+  || txDetails.transaction.message.accountKeys;
+
+const treasuryIndex = keys.findIndex(
+  key => key.equals(treasuryToken)
+);
+
+const pre = txDetails.meta.preTokenBalances.find(
+  b => b.accountIndex === treasuryIndex
+);
+
+const post = txDetails.meta.postTokenBalances.find(
+  b => b.accountIndex === treasuryIndex
+);
+
+assert(pre && post);
+
+const received = new BN(post.uiTokenAmount.amount)
+  .sub(new BN(pre.uiTokenAmount.amount));
+
+assert(received.eq(new BN(300000)));
+
+console.log("Verified treasury payment:", received.toString());
+
+    const productData =
+      await pg.program.account.usdcProduct.fetch(product.publicKey);
+
+    const receiptData =
+      await pg.program.account.usdcReceipt.fetch(receipt);
+
+    assert(productData.totalSales.eq(new BN(1)));
+    assert(receiptData.amount.eq(price));
+    assert(receiptData.mint.equals(mint));
+    assert(receiptData.buyer.equals(buyer.publicKey));
+    assert(receiptData.product.equals(product.publicKey));
+
+    console.log("PASS: Expert received 0.70 USDC");
+    console.log("PASS: Roe Vault received 0.30 USDC");
+    console.log("PASS: Buyer remaining balance 1 USDC");
+    console.log("PASS: Official USDC receipt verified");
+    console.log("PASS: Sales counter verified");
+    console.log("Transaction:", tx);
+    console.log("ALL OFFICIAL USDC PAYMENT TESTS PASSED!");
+  });
+});
