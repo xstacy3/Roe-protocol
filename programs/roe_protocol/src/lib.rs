@@ -1,4 +1,7 @@
-se anchor_lang::prelude::*;
+se anchor_spl::token::{
+    self, Mint, Token, TokenAccount, TransferChecked
+};
+use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_lang::solana_program::pubkey;
 
@@ -10,6 +13,88 @@ pub const TREASURY: Pubkey =
 #[program]
 pub mod roe_protocol {
     use super::*;
+
+pub fn purchase_usdc_product(
+    ctx: Context<PurchaseUsdcProduct>,
+) -> Result<()> {
+    let product = &mut ctx.accounts.product;
+
+    require!(product.active, RoeError::InactiveProduct);
+
+    let price = product.price;
+    let vault_share = ((price as u128) * 30 / 100) as u64;
+    let expert_share = price - vault_share;
+
+    token::transfer_checked(
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.buyer_token.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
+                to: ctx.accounts.expert_token.to_account_info(),
+                authority: ctx.accounts.buyer.to_account_info(),
+            },
+        ),
+        expert_share,
+        6,
+    )?;
+
+    token::transfer_checked(
+        CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.buyer_token.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
+                to: ctx.accounts.treasury_token.to_account_info(),
+                authority: ctx.accounts.buyer.to_account_info(),
+            },
+        ),
+        vault_share,
+        6,
+    )?;
+
+    product.total_sales = product.total_sales
+        .checked_add(1)
+        .ok_or(RoeError::Overflow)?;
+
+    let receipt = &mut ctx.accounts.receipt;
+    receipt.buyer = ctx.accounts.buyer.key();
+    receipt.product = product.key();
+    receipt.mint = ctx.accounts.mint.key();
+    receipt.amount = price;
+
+    msg!("Expert received: {}", expert_share);
+    msg!("Roe Vault received: {}", vault_share);
+    msg!("ROE token purchase successful");
+
+    Ok(())
+}
+
+pub fn register_usdc_product(
+    ctx: Context<RegisterUsdcProduct>,
+    title: String,
+    price: u64,
+) -> Result<()> {
+    require!(
+        !title.is_empty() && title.len() <= 100,
+        RoeError::InvalidTitle
+    );
+
+    require!(price > 0, RoeError::InvalidPrice);
+
+    let product = &mut ctx.accounts.product;
+
+    product.expert = ctx.accounts.expert.key();
+    product.mint = ctx.accounts.mint.key();
+    product.title = title;
+    product.price = price;
+    product.active = true;
+    product.total_sales = 0;
+
+    msg!("ROE USDC product registered successfully");
+
+    Ok(())
+}
 
     pub fn register_product(
         ctx: Context<RegisterProduct>,
@@ -158,4 +243,91 @@ pub enum RoeError {
 
     #[msg("Arithmetic overflow.")]
     Overflow,
+}
+
+#[derive(Accounts)]
+pub struct RegisterUsdcProduct<'info> {
+    #[account(
+        init,
+        payer = expert,
+        space = 8 + 32 + 32 + 4 + 100 + 8 + 1 + 8
+    )]
+    pub product: Account<'info, UsdcProduct>,
+
+    #[account(mut)]
+    pub expert: Signer<'info>,
+
+    #[account(constraint = mint.decimals == 6)]
+    pub mint: Account<'info, Mint>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[account]
+pub struct UsdcProduct {
+    pub expert: Pubkey,
+    pub mint: Pubkey,
+    pub title: String,
+    pub price: u64,
+    pub active: bool,
+    pub total_sales: u64,
+}
+
+#[derive(Accounts)]
+pub struct PurchaseUsdcProduct<'info> {
+    #[account(mut, has_one = mint)]
+    pub product: Account<'info, UsdcProduct>,
+
+    #[account(mut)]
+    pub buyer: Signer<'info>,
+
+    #[account(constraint = mint.decimals == 6)]
+    pub mint: Account<'info, Mint>,
+
+    #[account(
+        mut,
+        constraint = buyer_token.owner == buyer.key(),
+        constraint = buyer_token.mint == mint.key(),
+        constraint = buyer_token.key() != expert_token.key(),
+        constraint = buyer_token.key() != treasury_token.key()
+    )]
+    pub buyer_token: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = expert_token.owner == product.expert,
+        constraint = expert_token.mint == mint.key()
+    )]
+    pub expert_token: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = treasury_token.owner == TREASURY,
+        constraint = treasury_token.mint == mint.key()
+    )]
+    pub treasury_token: Account<'info, TokenAccount>,
+
+    #[account(
+        init,
+        payer = buyer,
+        space = 8 + 32 + 32 + 32 + 8,
+        seeds = [
+            b"usdc_receipt",
+            product.key().as_ref(),
+            buyer.key().as_ref()
+        ],
+        bump
+    )]
+    pub receipt: Account<'info, UsdcReceipt>,
+
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[account]
+pub struct UsdcReceipt {
+    pub buyer: Pubkey,
+    pub product: Pubkey,
+    pub mint: Pubkey,
+    pub amount: u64,
 }
