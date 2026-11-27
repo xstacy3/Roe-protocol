@@ -332,5 +332,198 @@ console.log("PASS: No unauthorized receipt created");
 console.log("PASS: Attacker received zero USDC");
 console.log("PASS: Second buyer funds protected");
 console.log("ALL OFFICIAL USDC SECURITY CHECKS PASSED!");
+
+const [certificate] = web3.PublicKey.findProgramAddressSync(
+  [
+    Buffer.from("certificate"),
+    product.publicKey.toBuffer(),
+    buyer.publicKey.toBuffer(),
+  ],
+  pg.program.programId
+);
+
+const [secondCertificate] = web3.PublicKey.findProgramAddressSync(
+  [
+    Buffer.from("certificate"),
+    product.publicKey.toBuffer(),
+    secondBuyer.publicKey.toBuffer(),
+  ],
+  pg.program.programId
+);
+
+const certificateAccounts = {
+  product: product.publicKey,
+  expert: expert.publicKey,
+  receipt: receipt,
+  certificate: certificate,
+  systemProgram: web3.SystemProgram.programId,
+};
+
+async function expectRejection(action, pattern, label) {
+  let rejected = false;
+
+  try {
+    await action();
+  } catch (error) {
+    const details =
+      String(error) + " " + (error.logs || []).join(" ");
+
+    console.log("Rejection:", details);
+    rejected = pattern.test(details);
+  }
+
+  assert(rejected, label + " failed");
+  console.log("PASS:", label);
+}
+
+// Test 1: Unauthorized issuer
+await expectRejection(
+  () => pg.program.methods
+    .issueCertificate()
+    .accounts({
+      ...certificateAccounts,
+      expert: treasury,
+    })
+    .rpc(),
+  /ConstraintHasOne/i,
+  "Unauthorized certificate issuer blocked"
+);
+
+assert(
+  await pg.connection.getAccountInfo(
+    certificate, "confirmed"
+  ) === null
+);
+
+// Test 2: Student without purchase
+await expectRejection(
+  () => pg.program.methods
+    .issueCertificate()
+    .accounts({
+      ...certificateAccounts,
+      receipt: secondReceipt,
+      certificate: secondCertificate,
+    })
+    .signers([expert])
+    .rpc(),
+  /AccountNotInitialized|3012/i,
+  "Student without purchase blocked"
+);
+
+assert(
+  await pg.connection.getAccountInfo(
+    secondCertificate, "confirmed"
+  ) === null
+);
+
+// Test 3: Authorized certificate issuance
+const certificateTx = await pg.program.methods
+  .issueCertificate()
+  .accounts(certificateAccounts)
+  .signers([expert])
+  .rpc();
+
+console.log("PASS: Authorized certificate issued");
+console.log("Certificate:", certificate.toBase58());
+console.log("Certificate transaction:", certificateTx);
+
+// Test 4: Public verification
+
+const issueConfirmation =
+  await pg.connection.confirmTransaction(
+    certificateTx,
+    "finalized"
+  );
+
+assert(issueConfirmation.value.err === null);
+
+
+const certificateAccount =
+  await pg.connection.getAccountInfo(
+    certificate,
+    "finalized"
+  );
+
+assert(certificateAccount !== null);
+
+const certificateData =
+  pg.program.coder.accounts.decode(
+    "Certificate",
+    certificateAccount.data
+  );
+
+assert(certificateData.student.equals(buyer.publicKey));
+assert(certificateData.product.equals(product.publicKey));
+assert(certificateData.expert.equals(expert.publicKey));
+assert(certificateData.issuedAt.gt(new BN(0)));
+assert(certificateData.revoked === false);
+
+
+console.log("PASS: Certificate publicly verified");
+
+// Test 5: Duplicate certificate
+await expectRejection(
+  () => pg.program.methods
+    .issueCertificate()
+    .accounts(certificateAccounts)
+    .signers([expert])
+    .rpc(),
+  /already in use|already initialized/i,
+  "Duplicate certificate blocked"
+);
+
+// Test 6: Unauthorized revocation
+await expectRejection(
+  () => pg.program.methods
+    .revokeCertificate()
+    .accounts({
+      expert: treasury,
+      certificate: certificate,
+    })
+    .rpc(),
+  /ConstraintHasOne/i,
+  "Unauthorized revocation blocked"
+);
+
+const unchangedCertificate =
+  await pg.program.account.certificate.fetch(certificate);
+
+assert(unchangedCertificate.revoked === false);
+
+// Test 7: Authorized revocation
+const revokeTx = await pg.program.methods
+  .revokeCertificate()
+  .accounts({
+    expert: expert.publicKey,
+    certificate: certificate,
+  })
+  .signers([expert])
+  .rpc();
+
+console.log("Revocation transaction:", revokeTx);
+
+const revocationConfirmation =
+  await pg.connection.confirmTransaction(
+    revokeTx,
+    "confirmed"
+  );
+
+assert(revocationConfirmation.value.err === null);
+
+const revokedCertificate =
+  await pg.program.account.certificate.fetch(certificate);
+
+console.log(
+  "Certificate revoked status:",
+  revokedCertificate.revoked
+);
+
+assert(revokedCertificate.revoked === true);
+
+console.log("PASS: Certificate successfully revoked");
+console.log("Revocation transaction:", revokeTx);
+
+console.log("ALL ROE V5 CERTIFICATE TESTS PASSED!");
+
   });
 });
