@@ -15,6 +15,45 @@ pub const USDC_MINT: Pubkey =
 pub mod roe_protocol {
     use super::*;
 
+pub fn issue_holder_certificate(
+    ctx: Context<IssueHolderCertificate>,
+) -> Result<()> {
+    require!(
+        ctx.accounts.holder_program.enabled,
+        RoeError::InactiveProduct
+    );
+
+    require!(
+        ctx.accounts.product.active,
+        RoeError::InactiveProduct
+    );
+
+    let certificate = &mut ctx.accounts.certificate;
+
+    certificate.student = ctx.accounts.student.key();
+    certificate.product = ctx.accounts.product.key();
+    certificate.expert = ctx.accounts.expert.key();
+    certificate.issued_at = Clock::get()?.unix_timestamp;
+    certificate.revoked = false;
+
+    msg!("ROE holder certificate issued successfully");
+
+    Ok(())
+}
+
+pub fn register_holder_program(
+    ctx: Context<RegisterHolderProgram>,
+) -> Result<()> {
+    let holder_program = &mut ctx.accounts.holder_program;
+
+    holder_program.product = ctx.accounts.product.key();
+    holder_program.enabled = true;
+
+    msg!("ROE holder program registered");
+
+    Ok(())
+}
+
 pub fn issue_certificate(
     ctx: Context<IssueCertificate>,
 ) -> Result<()> {
@@ -414,4 +453,77 @@ pub struct Certificate {
     pub expert: Pubkey,
     pub issued_at: i64,
     pub revoked: bool,
+}
+
+#[derive(Accounts)]
+pub struct RegisterHolderProgram<'info> {
+    #[account(
+        constraint = product.mint == USDC_MINT
+    )]
+    pub product: Account<'info, UsdcProduct>,
+
+    #[account(mut, address = TREASURY)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + 32 + 1,
+        seeds = [
+            b"holder_program",
+            product.key().as_ref()
+        ],
+        bump
+    )]
+    pub holder_program: Account<'info, HolderProgram>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[account]
+pub struct HolderProgram {
+    pub product: Pubkey,
+    pub enabled: bool,
+}
+
+#[derive(Accounts)]
+pub struct IssueHolderCertificate<'info> {
+    #[account(
+        has_one = expert,
+        constraint = product.mint == USDC_MINT
+    )]
+    pub product: Account<'info, UsdcProduct>,
+
+    #[account(mut)]
+    pub expert: Signer<'info>,
+
+    #[account(address = TREASURY)]
+    pub authority: Signer<'info>,
+
+    pub student: Signer<'info>,
+
+    #[account(
+        has_one = product,
+        seeds = [
+            b"holder_program",
+            product.key().as_ref()
+        ],
+        bump
+    )]
+    pub holder_program: Account<'info, HolderProgram>,
+
+    #[account(
+        init,
+        payer = expert,
+        space = 8 + 32 + 32 + 32 + 8 + 1,
+        seeds = [
+            b"certificate",
+            product.key().as_ref(),
+            student.key().as_ref()
+        ],
+        bump
+    )]
+    pub certificate: Account<'info, Certificate>,
+
+    pub system_program: Program<'info, System>,
 }
