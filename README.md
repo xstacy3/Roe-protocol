@@ -145,3 +145,34 @@ On November 24, 2026, ROE Protocol successfully processed a 1 USDC test purchase
 [Verify on Solana Explorer](https://explorer.solana.com/tx/4ciPPmgvPyBCxwwnfVyhGjjruWbQeSW1q1wMmjSCyocks8fxs15fRsJ6boRRt1akVhk7tdZBzmPw3jFMj4GRZfmH?cluster=devnet)
 
 The Shopify development theme remains unpublished. All payments use test tokens.
+## ROE Protocol V5 — On-Chain Certificates
+
+Developed during the DEV3PACK Solana Hackathon on November 27, 2026.
+
+ROE Protocol V5 introduces blockchain-verifiable educational certificates for CAVIAR MINDSET™.
+
+### Implemented Features
+
+- Authorized expert certificate issuance
+- On-chain student purchase eligibility verification
+- Non-transferable certificate records
+- Public certificate verification
+- Duplicate certificate prevention
+- Authorized certificate revocation
+- Protection against unauthorized issuance and revocation
+
+### Verified Devnet Transactions
+
+[Certificate Issuance](https://explorer.solana.com/tx/GHZu56eK1aA9KWs8Cf4qWZfnUnvGCuopmbhPJzucShJiacGoeEmisEDqVLPaHJxbCfE54NjDdpVn8k8JovwrxPb?cluster=devnet)
+
+[Certificate Revocation](https://explorer.solana.com/tx/3V2VGjUjWCW4ekQiEFgAEiDRNe19rUEUX5otxUpZFAo94chHPJJyGRpYKNDv85t7mswew3KBigJeni3V57nnxQu4?cluster=devnet)
+
+### Testing Results
+
+All four test suites and seven certificate checks passed.
+
+### Current Limitations
+
+Certificate eligibility currently requires an official USDC purchase receipt. Program completion is attested by the authorized expert.
+
+NFT-holder eligibility, CAVIAR EMPIRE™ integration and production security auditing remain future development milestones.
