@@ -1,0 +1,57 @@
+
+describe("ROE Protocol - Certificates", () => {
+  const program = pg.program;
+  const connection = program.provider.connection;
+
+  const product = new web3.PublicKey(
+    "4WRJb2sGA3ysDgKijdpUttoJ5vzYtKq6tD8AehDJsPu8"
+  );
+
+  const student = new web3.PublicKey(
+    "8HEdNxZhPtgWoxyPbrNguqfYWVswGs1VeEJ3G5pjkxwV"
+  );
+
+  const [receipt] = web3.PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("usdc_receipt"),
+      product.toBuffer(),
+      student.toBuffer(),
+    ],
+    program.programId
+  );
+
+  const [certificate] = web3.PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("certificate"),
+      product.toBuffer(),
+      student.toBuffer(),
+    ],
+    program.programId
+  );
+
+  it("Verifies student eligibility", async () => {
+    const record = await program.account.usdcReceipt.fetch(receipt);
+
+    assert.ok(record.buyer.equals(student));
+    assert.ok(record.product.equals(product));
+
+    console.log("Student eligibility verified");
+    console.log("Receipt:", receipt.toBase58());
+  });
+
+  it("Identifies the authorized certificate issuer", async () => {
+    const record = await program.account.usdcProduct.fetch(product);
+
+    console.log("Authorized expert:", record.expert.toBase58());
+    console.log("Certificate PDA:", certificate.toBase58());
+    console.log("Connected wallet:", pg.wallet.publicKey.toBase58());
+  });
+
+  it("Checks certificate availability", async () => {
+    const account = await connection.getAccountInfo(certificate);
+
+    assert.ok(account === null);
+
+    console.log("Certificate address available");
+  });
+});
