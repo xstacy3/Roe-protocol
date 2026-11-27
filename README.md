@@ -132,3 +132,16 @@ MIT License
 Built by The Roe Vault.
 
 CAVIAR MINDSET™
+## Shopify Integration — Verified Devnet Checkout
+
+On November 24, 2026, ROE Protocol successfully processed a 1 USDC test purchase through The Roe Vault's Shopify development theme.
+
+- Expert received: 0.70 USDC (70%)
+- Roe Vault received: 0.30 USDC (30%)
+- Transaction fee: 0.00008 SOL
+- Network: Solana Devnet
+- Status: Finalized
+
+[Verify on Solana Explorer](https://explorer.solana.com/tx/4ciPPmgvPyBCxwwnfVyhGjjruWbQeSW1q1wMmjSCyocks8fxs15fRsJ6boRRt1akVhk7tdZBzmPw3jFMj4GRZfmH?cluster=devnet)
+
+The Shopify development theme remains unpublished. All payments use test tokens.
