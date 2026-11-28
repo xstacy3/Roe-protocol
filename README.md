@@ -201,5 +201,8 @@ Program ID: `AgLgRNkHxgryW1c254Fm1X7Jo9FnuL9C3KeDCCZbihdb`
 [Successful holder certificate transaction](https://explorer.solana.com/tx/LUQhMjq5HjwbqLpJzw76Z64MWhssQTzyaeS1jEfH5N8SA7MxoLpnQ6VRnMv7L5HzdydHMxt9CQ4KfgNkcdxnJ2p?cluster=devnet)
 
 ### Current limitations
+### Final V6 Regression Testing — November 28, 2026
 
-Live NFT ownership verification remains pending. Holder eligibility currently requires authorized approval. The latest USDC regression suite requires retesting.
+All five test suites and seven test cases passed successfully on Solana Devnet, including SOL and USDC revenue sharing, payment security, certificate issuance, revocation, and holder authorization.
+
+No failed test cases.
