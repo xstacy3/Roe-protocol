@@ -176,3 +176,30 @@ All four test suites and seven certificate checks passed.
 Certificate eligibility currently requires an official USDC purchase receipt. Program completion is attested by the authorized expert.
 
 NFT-holder eligibility, CAVIAR EMPIRE™ integration and production security auditing remain future development milestones.
+## V6 — Holder Program Authorization
+
+ROE Protocol now supports two educational access models:
+
+- Holder programs: Free access for eligible 888 VAULT holders.
+- Premium programs: Paid access for all participants.
+
+### Implemented and tested
+
+- Authorized holder program registration
+- Unauthorized registration prevention
+- Unauthorized certificate issuance prevention
+- Free certificate issuance restricted to designated holder programs
+- Duplicate certificate prevention
+- On-chain certificate verification
+
+### Deployment
+
+Network: Solana Devnet
+
+Program ID: `AgLgRNkHxgryW1c254Fm1X7Jo9FnuL9C3KeDCCZbihdb`
+
+[Successful holder certificate transaction](https://explorer.solana.com/tx/LUQhMjq5HjwbqLpJzw76Z64MWhssQTzyaeS1jEfH5N8SA7MxoLpnQ6VRnMv7L5HzdydHMxt9CQ4KfgNkcdxnJ2p?cluster=devnet)
+
+### Current limitations
+
+Live NFT ownership verification remains pending. Holder eligibility currently requires authorized approval. The latest USDC regression suite requires retesting.
